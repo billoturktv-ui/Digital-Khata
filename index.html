@@ -42,7 +42,7 @@
     Loading DigiKhata…
   </div>
 </div>
-<script type="text/babel" data-presets="react" data-type="module">
+<script type="text/plain" id="app-source">
 const ICONS = {
   LayoutDashboard:"📊", Users:"👥", Receipt:"🧾", SplitSquareHorizontal:"➗", BarChart3:"📈",
   SettingsIcon:"⚙", Plus:"＋", Search:"🔍", X:"✕", Phone:"📞", MapPin:"📍", ChevronRight:"›",
@@ -1458,6 +1458,22 @@ const rootEl = document.getElementById("root");
 const root = ReactDOM.createRoot(rootEl);
 root.render(React.createElement(App));
 
+</script>
+<script>
+  (function () {
+    try {
+      var code = document.getElementById("app-source").textContent;
+      var out = Babel.transform(code, {
+        presets: [["react", { runtime: "classic" }]],
+        filename: "app.jsx"
+      }).code;
+      var s = document.createElement("script");
+      s.text = out;
+      document.body.appendChild(s);
+    } catch (err) {
+      showBootError((err && err.message) || String(err));
+    }
+  })();
 </script>
 <script>
   if ("serviceWorker" in navigator) {
