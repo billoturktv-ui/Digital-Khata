@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>DigiKhata — Liquid Glass Ledger</title>
+<meta name="description" content="Customer ledger / Khata management app for small shop owners." />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#0B1120" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="DigiKhata" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="icon" href="icons/icon-192.png" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html, body, #root { height: 100%; }
+  body { margin: 0; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react" data-type="module">
+const ICONS = {
+  LayoutDashboard:"📊", Users:"👥", Receipt:"🧾", SplitSquareHorizontal:"➗", BarChart3:"📈",
+  SettingsIcon:"⚙", Plus:"＋", Search:"🔍", X:"✕", Phone:"📞", MapPin:"📍", ChevronRight:"›",
+  ArrowUpRight:"↗", ArrowDownRight:"↘", Send:"📤", MessageCircle:"💬", Download:"⬇",
+  Upload:"⬆", Trash2:"🗑", Edit3:"✎", Check:"✓", Lock:"🔒", Sun:"☀", Moon:"🌙",
+  Calendar:"📅", TrendingUp:"📈", TrendingDown:"📉", FileText:"📄", Printer:"🖨",
+  AlertTriangle:"⚠", UserPlus:"🆕", ArrowLeft:"←", Percent:"%", ShieldCheck:"🛡"
+};
+function IconR({ name, size = 18, style = {}, className = "" }) {
+  return React.createElement("span", { style: { fontSize: size, lineHeight: 1, display: "inline-block", ...style }, className }, ICONS[name] || "•");
+}
+
+// ---- localStorage-backed shim for window.storage (same interface used by the app) ----
+window.storage = {
+  get: async (key) => {
+    const v = localStorage.getItem(key);
+    return v === null ? null : { key, value: v, shared: false };
+  },
+  set: async (key, value) => {
+    localStorage.setItem(key, value);
+    return { key, value, shared: false };
+  },
+  delete: async (key) => { localStorage.removeItem(key); return { key, deleted: true, shared: false }; },
+  list: async (prefix) => {
+    const keys = Object.keys(localStorage).filter((k) => !prefix || k.startsWith(prefix));
+    return { keys, prefix, shared: false };
+  },
+};
+
+/* =========================================================================
+   DigiKhata — Liquid Glass Ledger
+   A complete customer ledger / Khata management app for small shop owners.
+   Single-file React artifact. Data persists via window.storage.
+   ========================================================================= */
+
+// ---------------------------- Constants ----------------------------------
+const CURRENCIES = { PKR: "Rs. ", INR: "₹", USD: "$", GBP: "£", AED: "AED " };
+
+const NAV_ITEMS = [
+  { id: "dashboard", label: "Dashboard", icon: "LayoutDashboard" },
+  { id: "customers", label: "Customers", icon: "Users" },
+  { id: "transactions", label: "Ledger", icon: "Receipt" },
+  { id: "split", label: "Split Bill", icon: "SplitSquareHorizontal" },
+  { id: "reports", label: "Reports", icon: "BarChart3" },
+  { id: "settings", label: "Settings", icon: "SettingsIcon" },
+];
+
+const inputStyle = { background: "var(--glass-bg-strong)", border: "1px solid var(--glass-border)", color: "var(--text-primary)" };
+
+const GLOBAL_CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+.theme-dark { --bg-grad-1:#0B1120; --bg-grad-2:#131B2E; --glass-bg:rgba(255,255,255,0.06); --glass-border:rgba(255,255,255,0.14); --glass-bg-strong:rgba(28,36,56,0.88); --text-primary:#E9EDF4; --text-secondary:#8D9AB0; --accent:#F5A524; --positive:#34D399; --negative:#FB7185; --shadow:0 8px 32px rgba(0,0,0,0.35); }
+.theme-light { --bg-grad-1:#EEF1F6; --bg-grad-2:#E2E7F0; --glass-bg:rgba(255,255,255,0.55); --glass-border:rgba(15,23,42,0.08); --glass-bg-strong:rgba(255,255,255,0.9); --text-primary:#12182B; --text-secondary:#5B6478; --accent:#D9840F; --positive:#0F9D67; --negative:#DC3E56; --shadow:0 8px 32px rgba(15,23,42,0.1); }
+* { font-family: 'Inter', sans-serif; box-sizing: border-box; }
+.font-display { font-family: 'Outfit', sans-serif; }
+.glass { background: var(--glass-bg); border: 1px solid var(--glass-border); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); box-shadow: var(--shadow); }
+::-webkit-scrollbar { width: 0; height: 0; }
+input::placeholder, textarea::placeholder { color: var(--text-secondary); opacity: 0.55; }
+input, textarea, select { font-family: 'Inter', sans-serif; }
+select option { background: #1c2438; color: #E9EDF4; }
+@keyframes shake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-6px);} 75%{transform:translateX(6px);} }
+.shake { animation: shake 0.35s ease; }
+@media print {
+  body * { visibility: hidden; }
+  #receipt-print, #receipt-print * { visibility: visible; }
+  #receipt-print { position: fixed; top: 0; left: 0; width: 100%; }
+}
+`;
+
+// ---------------------------- Helpers -------------------------------------
+const uid = (p = "id") => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+function formatMoney(amount, symbol = "Rs. ") {
+  const n = Number(amount) || 0;
+  const neg = n < 0;
+  const abs = Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return `${neg ? "-" : ""}${symbol}${abs}`;
+}
+function formatDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+}
+function formatTime(iso) {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+function formatDateTime(iso) { return `${formatDate(iso)} · ${formatTime(iso)}`; }
+function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+function endOfDay(d) { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; }
+function inRange(iso, from, to) {
+  const t = new Date(iso).getTime();
+  return (!from || t >= from.getTime()) && (!to || t <= to.getTime());
+}
+function nextReceiptNumber(counter) { return `INV-${String(counter).padStart(6, "0")}`; }
+
+function getRangeDates(range) {
+  const now = new Date();
+  if (range === "today") return { from: startOfDay(now), to: endOfDay(now) };
+  if (range === "yesterday") { const y = new Date(now); y.setDate(y.getDate() - 1); return { from: startOfDay(y), to: endOfDay(y) }; }
+  if (range === "week") { const w = new Date(now); w.setDate(w.getDate() - 7); return { from: startOfDay(w), to: endOfDay(now) }; }
+  if (range === "month") { const m = new Date(now); m.setDate(m.getDate() - 30); return { from: startOfDay(m), to: endOfDay(now) }; }
+  return { from: null, to: null };
+}
+
+// Ascending ledger with running balance for one customer
+function ledgerWithRunning(customer, allTxns) {
+  if (!customer) return [];
+  const txns = allTxns
+    .filter((t) => t.customerId === customer.id)
+    .slice()
+    .sort((a, b) => new Date(a.date) - new Date(b.date) || a.createdAt - b.createdAt);
+  let running = Number(customer.openingBalance) || 0;
+  const rows = [];
+  for (const t of txns) {
+    running += t.type === "credit" ? Number(t.amount) : -Number(t.amount);
+    rows.push({ ...t, runningBalance: running });
+  }
+  return rows;
+}
+function getBalance(customer, allTxns) {
+  const rows = ledgerWithRunning(customer, allTxns);
+  return rows.length ? rows[rows.length - 1].runningBalance : Number(customer.openingBalance) || 0;
+}
+
+function buildWhatsAppLink(phone, message) {
+  const clean = (phone || "").replace(/[^0-9+]/g, "").replace(/^\+/, "");
+  return `https://wa.me/${clean}?text=${encodeURIComponent(message)}`;
+}
+function downloadFile(filename, text, type = "application/json") {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---------------------------- Demo data ------------------------------------
+function seedDemoData() {
+  const now = Date.now();
+  const daysAgo = (n) => new Date(now - n * 86400000).toISOString();
+  const customers = [
+    { id: "c1", name: "Ahmed Khan", phone: "+923001234567", address: "Gulberg, Lahore", notes: "Regular grocery customer", avatarColor: "#F5A524", openingBalance: 2000, type: "regular", status: "active", createdAt: daysAgo(60) },
+    { id: "c2", name: "Sara Malik", phone: "+923011234567", address: "DHA Phase 5, Karachi", notes: "Pays on time", avatarColor: "#34D399", openingBalance: 0, type: "vip", status: "active", createdAt: daysAgo(45) },
+    { id: "c3", name: "Bilal Traders", phone: "+923021234567", address: "Saddar, Karachi", notes: "Wholesale buyer", avatarColor: "#60A5FA", openingBalance: -1500, type: "business", status: "active", createdAt: daysAgo(90) },
+    { id: "c4", name: "Fatima Rizvi", phone: "+923031234567", address: "F-10, Islamabad", notes: "", avatarColor: "#FB7185", openingBalance: 500, type: "regular", status: "active", createdAt: daysAgo(30) },
+    { id: "c5", name: "Usman Sheikh", phone: "+923041234567", address: "Model Town, Lahore", notes: "New customer", avatarColor: "#A78BFA", openingBalance: 0, type: "regular", status: "active", createdAt: daysAgo(10) },
+  ];
+  const transactions = [
+    { id: "t1", customerId: "c1", date: daysAgo(20), type: "credit", amount: 3500, description: "Grocery items", paymentMethod: "Cash", referenceNumber: "", notes: "", receiptNumber: "INV-000001", createdAt: now - 20 * 86400000 },
+    { id: "t2", customerId: "c1", date: daysAgo(15), type: "debit", amount: 2000, description: "Partial payment", paymentMethod: "Cash", referenceNumber: "", notes: "", receiptNumber: "INV-000002", createdAt: now - 15 * 86400000 },
+    { id: "t3", customerId: "c1", date: daysAgo(5), type: "credit", amount: 1200, description: "Cooking oil & rice", paymentMethod: "Cash", referenceNumber: "", notes: "", receiptNumber: "INV-000003", createdAt: now - 5 * 86400000 },
+    { id: "t4", customerId: "c2", date: daysAgo(25), type: "credit", amount: 4000, description: "Electronics repair", paymentMethod: "Bank Transfer", referenceNumber: "TXN552", notes: "", receiptNumber: "INV-000004", createdAt: now - 25 * 86400000 },
+    { id: "t5", customerId: "c2", date: daysAgo(10), type: "debit", amount: 4000, description: "Full payment", paymentMethod: "Bank Transfer", referenceNumber: "TXN601", notes: "Paid in full", receiptNumber: "INV-000005", createdAt: now - 10 * 86400000 },
+    { id: "t6", customerId: "c3", date: daysAgo(40), type: "debit", amount: 3000, description: "Advance received", paymentMethod: "Cash", referenceNumber: "", notes: "", receiptNumber: "INV-000006", createdAt: now - 40 * 86400000 },
+    { id: "t7", customerId: "c3", date: daysAgo(2), type: "credit", amount: 1800, description: "Bulk stationery order", paymentMethod: "Cash", referenceNumber: "", notes: "", receiptNumber: "INV-000007", createdAt: now - 2 * 86400000 },
+    { id: "t8", customerId: "c4", date: daysAgo(8), type: "credit", amount: 900, description: "Mobile accessories", paymentMethod: "Cash", referenceNumber: "", notes: "", receiptNumber: "INV-000008", createdAt: now - 8 * 86400000 },
+    { id: "t9", customerId: "c4", date: daysAgo(1), type: "debit", amount: 400, description: "Payment received", paymentMethod: "JazzCash", referenceNumber: "", notes: "", receiptNumber: "INV-000009", createdAt: now - 86400000 },
+    { id: "t10", customerId: "c5", date: daysAgo(3), type: "credit", amount: 600, description: "Welcome purchase", paymentMethod: "Cash", referenceNumber: "", notes: "", receiptNumber: "INV-000010", createdAt: now - 3 * 86400000 },
+    { id: "t11", customerId: "c1", date: daysAgo(0), type: "credit", amount: 750, description: "Evening grocery", paymentMethod: "Cash", referenceNumber: "", notes: "", receiptNumber: "INV-000011", createdAt: now },
+  ];
+  const settings = {
+    businessName: "Al-Karam General Store",
+    ownerName: "Muhammad Imran",
+    phone: "+923000000000",
+    whatsappNumber: "+923000000000",
+    address: "Main Bazaar, Lahore, Pakistan",
+    email: "",
+    currency: "PKR",
+    receiptFooter: "Thank you for your business!",
+    defaultWhatsAppMessage: "Assalam-o-Alaikum,\n\nHere is your Khata update:\n\nCustomer: {name}\nTransaction: {description}\nAmount: {amount}\nPrevious Balance: {previousBalance}\nNew Balance: {newBalance}\n\nDate: {date}\n\nThank you.",
+    theme: "dark",
+    pinEnabled: false,
+    pin: "",
+    receiptCounter: 12,
+  };
+  return { customers, transactions, settings };
+}
+
+// ---------------------------- Small UI atoms --------------------------------
+function GlassCard({ className = "", style = {}, children, onClick }) {
+  return <div className={`glass rounded-3xl ${className}`} style={style} onClick={onClick}>{children}</div>;
+}
+
+function Btn({ children, onClick, variant = "primary", className = "", disabled, style = {} }) {
+  const base = "px-4 py-2.5 rounded-2xl font-semibold text-sm transition active:scale-95 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed";
+  const variants = {
+    primary: { background: "var(--accent)", color: "#1A1204" },
+    ghost: { background: "var(--glass-bg)", color: "var(--text-primary)", border: "1px solid var(--glass-border)" },
+    danger: { background: "rgba(251,113,133,0.15)", color: "var(--negative)", border: "1px solid rgba(251,113,133,0.3)" },
+  };
+  return <button disabled={disabled} onClick={onClick} className={`${base} ${className}`} style={{ ...variants[variant], ...style }}>{children}</button>;
+}
+
+function IconBtn({ icon, onClick, className = "", size = 18, style = {} }) {
+  return (
+    <button onClick={onClick} className={`w-10 h-10 rounded-full flex items-center justify-center transition active:scale-90 shrink-0 ${className}`} style={{ background: "var(--glass-bg)", border: "1px solid var(--glass-border)", color: "var(--text-primary)", ...style }}>
+      <IconR name={icon} size={size} />
+    </button>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+function TextInput(props) {
+  const { className = "", style = {}, ...rest } = props;
+  return <input {...rest} className={`rounded-xl px-3.5 py-2.5 text-sm outline-none w-full ${className}`} style={{ ...inputStyle, ...style }} />;
+}
+function TextArea(props) {
+  const { className = "", style = {}, ...rest } = props;
+  return <textarea {...rest} className={`rounded-xl px-3.5 py-2.5 text-sm outline-none w-full resize-none ${className}`} style={{ ...inputStyle, ...style }} />;
+}
+function Select({ value, onChange, options, className = "" }) {
+  return (
+    <select value={value} onChange={onChange} className={`rounded-xl px-3.5 py-2.5 text-sm outline-none w-full ${className}`} style={inputStyle}>
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
+function Modal({ open, onClose, title, children }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }} onClick={onClose}>
+      <div className="w-full md:max-w-md rounded-t-3xl md:rounded-3xl max-h-[88vh] overflow-y-auto" style={{ background: "var(--glass-bg-strong)", border: "1px solid var(--glass-border)" }} onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 flex items-center justify-between px-5 py-4 z-10" style={{ background: "var(--glass-bg-strong)", borderBottom: "1px solid var(--glass-border)" }}>
+          <h3 className="font-display font-semibold text-lg" style={{ color: "var(--text-primary)" }}>{title}</h3>
+          <IconBtn icon="X" onClick={onClose} />
+        </div>
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDialog({ open, onClose, onConfirm, title, message }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-5" style={{ background: "rgba(0,0,0,0.6)" }} onClick={onClose}>
+      <div className="glass rounded-3xl p-6 max-w-sm w-full" style={{ background: "var(--glass-bg-strong)" }} onClick={(e) => e.stopPropagation()}>
+        <div className="w-12 h-12 rounded-full flex items-center justify-center mb-4" style={{ background: "rgba(251,113,133,0.15)" }}>
+          <IconR name="AlertTriangle" size={22} style={{ color: "var(--negative)" }} />
+        </div>
+        <h3 className="font-display font-semibold text-lg mb-2" style={{ color: "var(--text-primary)" }}>{title}</h3>
+        <p className="text-sm mb-5" style={{ color: "var(--text-secondary)" }}>{message}</p>
+        <div className="flex gap-3">
+          <Btn variant="ghost" className="flex-1" onClick={onClose}>Cancel</Btn>
+          <Btn variant="danger" className="flex-1" onClick={onConfirm}>Delete</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ToastView({ toast }) {
+  if (!toast) return null;
+  return (
+    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[70] px-4 py-3 rounded-2xl glass flex items-center gap-2" style={{ background: "var(--glass-bg-strong)" }}>
+      <IconR name="Check" size={16} style={{ color: "var(--positive)" }} />
+      <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{toast}</span>
+    </div>
+  );
+}
+
+function EmptyState({ icon, title, subtitle }) {
+  return (
+    <div className="flex flex-col items-center justify-center text-center py-14 px-6">
+      <div className="w-14 h-14 rounded-full flex items-center justify-center mb-4" style={{ background: "var(--glass-bg)", border: "1px solid var(--glass-border)" }}>
+        <IconR name={icon} size={22} style={{ color: "var(--text-secondary)" }} />
+      </div>
+      <p className="font-medium" style={{ color: "var(--text-primary)" }}>{title}</p>
+      {subtitle && <p className="text-sm mt-1 max-w-xs" style={{ color: "var(--text-secondary)" }}>{subtitle}</p>}
+    </div>
+  );
+}
+
+function ActionChip({ icon, label, onClick }) {
+  return (
+    <button onClick={onClick} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl transition active:scale-95" style={{ background: "var(--glass-bg)", border: "1px solid var(--glass-border)" }}>
+      <IconR name={icon} size={17} style={{ color: "var(--accent)" }} />
+      <span className="text-[10.5px] font-medium text-center leading-tight px-1" style={{ color: "var(--text-primary)" }}>{label}</span>
+    </button>
+  );
+}
+
+// ---------------------------- Screens ---------------------------------------
+function Dashboard({ customers, transactions, settings, onNav, onQuickAction, onOpenCustomer }) {
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+  const balances = customers.map((c) => ({ c, bal: getBalance(c, transactions) }));
+  const totalReceivable = balances.filter((b) => b.bal > 0).reduce((s, b) => s + b.bal, 0);
+  const totalPayable = balances.filter((b) => b.bal < 0).reduce((s, b) => s + Math.abs(b.bal), 0);
+  const today = new Date();
+  const todaysTxns = transactions.filter((t) => new Date(t.date).toDateString() === today.toDateString());
+  const recentCustomers = customers.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 4);
+  const recentTxns = transactions.slice().sort((a, b) => new Date(b.date) - new Date(a.date) || b.createdAt - a.createdAt).slice(0, 5);
+  const outstanding = balances.filter((b) => Math.abs(b.bal) > 0).length;
+
+  const quickActions = [
+    { id: "addCustomer", label: "Add Customer", icon: "UserPlus" },
+    { id: "addTransaction", label: "Add Transaction", icon: "Receipt" },
+    { id: "receivePayment", label: "Receive Payment", icon: "ArrowDownRight" },
+    { id: "sendPayment", label: "Send Payment", icon: "ArrowUpRight" },
+    { id: "splitBill", label: "Split Bill", icon: "SplitSquareHorizontal" },
+    { id: "sendReceipt", label: "Send Receipt", icon: "Send" },
+  ];
+
+  return (
+    <div className="space-y-5 pb-28 md:pb-8">
+      <div>
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{today.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}</p>
+        <h1 className="font-display text-2xl font-bold" style={{ color: "var(--text-primary)" }}>{settings.businessName || "My Shop"}</h1>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <GlassCard className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Receivables</span>
+            <IconR name="TrendingUp" size={16} style={{ color: "var(--positive)" }} />
+          </div>
+          <p className="font-display text-xl font-bold" style={{ color: "var(--positive)" }}>{formatMoney(totalReceivable, symbol)}</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>Customers owe you</p>
+        </GlassCard>
+        <GlassCard className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Payables</span>
+            <IconR name="TrendingDown" size={16} style={{ color: "var(--negative)" }} />
+          </div>
+          <p className="font-display text-xl font-bold" style={{ color: "var(--negative)" }}>{formatMoney(totalPayable, symbol)}</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>You owe customers</p>
+        </GlassCard>
+        <GlassCard className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Customers</span>
+            <IconR name="Users" size={16} style={{ color: "var(--accent)" }} />
+          </div>
+          <p className="font-display text-xl font-bold" style={{ color: "var(--text-primary)" }}>{customers.length}</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{outstanding} with balance</p>
+        </GlassCard>
+        <GlassCard className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Today</span>
+            <IconR name="Calendar" size={16} style={{ color: "var(--accent)" }} />
+          </div>
+          <p className="font-display text-xl font-bold" style={{ color: "var(--text-primary)" }}>{todaysTxns.length}</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>transactions today</p>
+        </GlassCard>
+      </div>
+
+      <GlassCard className="p-4">
+        <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Quick actions</h3>
+        <div className="grid grid-cols-3 gap-3">
+          {quickActions.map((qa) => (
+            <button key={qa.id} onClick={() => onQuickAction(qa.id)} className="flex flex-col items-center gap-2 py-3 rounded-2xl transition active:scale-95" style={{ background: "var(--glass-bg)", border: "1px solid var(--glass-border)" }}>
+              <IconR name={qa.icon} size={18} style={{ color: "var(--accent)" }} />
+              <span className="text-[11px] font-medium text-center leading-tight" style={{ color: "var(--text-primary)" }}>{qa.label}</span>
+            </button>
+          ))}
+        </div>
+      </GlassCard>
+
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Recent customers</h3>
+          <button onClick={() => onNav("customers")} className="text-xs font-medium flex items-center gap-1" style={{ color: "var(--accent)" }}>See all <IconR name="ChevronRight" size={14} /></button>
+        </div>
+        <div className="flex gap-3 overflow-x-auto pb-1">
+          {recentCustomers.map((c) => {
+            const bal = getBalance(c, transactions);
+            return (
+              <GlassCard key={c.id} className="p-3 min-w-[140px] cursor-pointer" onClick={() => onOpenCustomer(c.id)}>
+                <div className="w-9 h-9 rounded-full flex items-center justify-center font-semibold text-sm mb-2" style={{ background: c.avatarColor + "33", color: c.avatarColor }}>{c.name.charAt(0)}</div>
+                <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>{c.name}</p>
+                <p className="text-xs mt-0.5" style={{ color: bal > 0 ? "var(--positive)" : bal < 0 ? "var(--negative)" : "var(--text-secondary)" }}>{bal === 0 ? "Settled" : formatMoney(Math.abs(bal), symbol)}</p>
+              </GlassCard>
+            );
+          })}
+          {recentCustomers.length === 0 && <p className="text-sm" style={{ color: "var(--text-secondary)" }}>No customers yet.</p>}
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Recent transactions</h3>
+          <button onClick={() => onNav("transactions")} className="text-xs font-medium flex items-center gap-1" style={{ color: "var(--accent)" }}>See all <IconR name="ChevronRight" size={14} /></button>
+        </div>
+        <GlassCard className="p-2">
+          {recentTxns.map((t, i) => {
+            const cust = customers.find((c) => c.id === t.customerId);
+            return (
+              <div key={t.id} className="flex items-center gap-3 p-2.5" style={{ borderBottom: i < recentTxns.length - 1 ? "1px solid var(--glass-border)" : "none" }}>
+                <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: t.type === "credit" ? "rgba(52,211,153,0.15)" : "rgba(251,113,133,0.15)" }}>
+                  {t.type === "credit" ? <IconR name="ArrowUpRight" size={16} style={{ color: "var(--positive)" }} /> : <IconR name="ArrowDownRight" size={16} style={{ color: "var(--negative)" }} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{cust?.name || "Unknown"}</p>
+                  <p className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{t.description} · {formatDate(t.date)}</p>
+                </div>
+                <p className="text-sm font-semibold" style={{ color: t.type === "credit" ? "var(--positive)" : "var(--negative)" }}>{t.type === "credit" ? "+" : "-"}{formatMoney(t.amount, symbol)}</p>
+              </div>
+            );
+          })}
+          {recentTxns.length === 0 && <p className="text-sm p-3" style={{ color: "var(--text-secondary)" }}>No transactions yet.</p>}
+        </GlassCard>
+      </div>
+    </div>
+  );
+}
+
+function CustomersScreen({ customers, transactions, settings, onOpen, onAdd }) {
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [sort, setSort] = useState("recent");
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+
+  let list = customers.map((c) => ({ ...c, bal: getBalance(c, transactions) }));
+  if (q.trim()) list = list.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone || "").includes(q));
+  if (filter === "owes") list = list.filter((c) => c.bal > 0);
+  if (filter === "owed") list = list.filter((c) => c.bal < 0);
+  if (filter === "settled") list = list.filter((c) => c.bal === 0);
+  if (sort === "name") list.sort((a, b) => a.name.localeCompare(b.name));
+  else if (sort === "balance") list.sort((a, b) => Math.abs(b.bal) - Math.abs(a.bal));
+  else list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  return (
+    <div className="space-y-4 pb-28 md:pb-8">
+      <div className="flex items-center justify-between">
+        <h1 className="font-display text-2xl font-bold" style={{ color: "var(--text-primary)" }}>Customers</h1>
+        <Btn onClick={onAdd}><IconR name="Plus" size={16} /> Add</Btn>
+      </div>
+      <div className="relative">
+        <IconR name="Search" size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: "var(--text-secondary)" }} />
+        <TextInput placeholder="Search by name or phone" value={q} onChange={(e) => setQ(e.target.value)} className="pl-10" />
+      </div>
+      <div className="flex gap-2 overflow-x-auto">
+        {[["all", "All"], ["owes", "Owes me"], ["owed", "I owe"], ["settled", "Settled"]].map(([k, l]) => (
+          <button key={k} onClick={() => setFilter(k)} className="px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition" style={filter === k ? { background: "var(--accent)", color: "#1A1204" } : { background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}>{l}</button>
+        ))}
+        <select value={sort} onChange={(e) => setSort(e.target.value)} className="ml-auto px-3 py-1.5 rounded-full text-xs" style={{ background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}>
+          <option value="recent">Recent</option>
+          <option value="name">Name</option>
+          <option value="balance">Balance</option>
+        </select>
+      </div>
+      <div className="space-y-2.5">
+        {list.map((c) => (
+          <GlassCard key={c.id} className="p-3.5 flex items-center gap-3 cursor-pointer" onClick={() => onOpen(c.id)}>
+            <div className="w-11 h-11 rounded-full flex items-center justify-center font-semibold shrink-0" style={{ background: c.avatarColor + "33", color: c.avatarColor }}>{c.name.charAt(0)}</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>{c.name}</p>
+              <p className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>{c.phone}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-semibold" style={{ color: c.bal > 0 ? "var(--positive)" : c.bal < 0 ? "var(--negative)" : "var(--text-secondary)" }}>{c.bal === 0 ? "Settled" : formatMoney(Math.abs(c.bal), symbol)}</p>
+              <p className="text-[11px]" style={{ color: "var(--text-secondary)" }}>{c.bal > 0 ? "owes you" : c.bal < 0 ? "you owe" : ""}</p>
+            </div>
+          </GlassCard>
+        ))}
+        {list.length === 0 && <EmptyState icon="Users" title="No customers found" subtitle="Try a different search or add a new customer." />}
+      </div>
+    </div>
+  );
+}
+
+function CustomerDetail({ customer, transactions, settings, onBack, onEdit, onDelete, onAddTxn, onOpenReceipt, onSendWhatsApp, onEditTxn, onDeleteTxn }) {
+  const [q, setQ] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+  const rows = ledgerWithRunning(customer, transactions).slice().reverse();
+  const bal = rows.length ? rows[0].runningBalance : Number(customer.openingBalance) || 0;
+  const totalCredit = transactions.filter((t) => t.customerId === customer.id && t.type === "credit").reduce((s, t) => s + Number(t.amount), 0);
+  const totalDebit = transactions.filter((t) => t.customerId === customer.id && t.type === "debit").reduce((s, t) => s + Number(t.amount), 0);
+
+  let filteredRows = rows;
+  if (q.trim()) filteredRows = filteredRows.filter((t) => t.description.toLowerCase().includes(q.toLowerCase()) || (t.receiptNumber || "").toLowerCase().includes(q.toLowerCase()));
+  if (typeFilter !== "all") filteredRows = filteredRows.filter((t) => t.type === typeFilter);
+
+  const ledgerMessage = () => {
+    let msg = `Assalam-o-Alaikum,\n\nHere is your Khata/ledger summary:\n\nCustomer: ${customer.name}\nCurrent Balance: ${bal >= 0 ? formatMoney(bal, symbol) + " (you owe)" : formatMoney(Math.abs(bal), symbol) + " (we owe you)"}\n\nRecent transactions:\n`;
+    rows.slice(0, 5).forEach((r) => { msg += `- ${formatDate(r.date)}: ${r.type === "credit" ? "+" : "-"}${formatMoney(r.amount, symbol)} (${r.description})\n`; });
+    msg += `\n${settings.receiptFooter || "Thank you."}`;
+    return msg;
+  };
+
+  return (
+    <div className="space-y-4 pb-28 md:pb-8">
+      <div className="flex items-center gap-3">
+        <IconBtn icon="ArrowLeft" onClick={onBack} />
+        <h1 className="font-display text-lg font-bold flex-1 truncate" style={{ color: "var(--text-primary)" }}>{customer.name}</h1>
+        <IconBtn icon="Edit3" onClick={() => onEdit(customer)} />
+        <IconBtn icon="Trash2" onClick={() => onDelete(customer)} />
+      </div>
+
+      <GlassCard className="p-5">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-14 h-14 rounded-full flex items-center justify-center font-bold text-lg shrink-0" style={{ background: customer.avatarColor + "33", color: customer.avatarColor }}>{customer.name.charAt(0)}</div>
+          <div className="flex-1 min-w-0">
+            {customer.phone && <p className="text-sm flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}><IconR name="Phone" size={13} />{customer.phone}</p>}
+            {customer.address && <p className="text-xs flex items-center gap-1.5 mt-0.5 truncate" style={{ color: "var(--text-secondary)" }}><IconR name="MapPin" size={12} />{customer.address}</p>}
+          </div>
+          <span className="text-[10px] px-2 py-1 rounded-full font-medium capitalize shrink-0" style={{ background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}>{customer.type}</span>
+        </div>
+        <div className="text-center py-3 rounded-2xl mb-4" style={{ background: bal > 0 ? "rgba(52,211,153,0.1)" : bal < 0 ? "rgba(251,113,133,0.1)" : "var(--glass-bg)" }}>
+          <p className="text-xs font-medium mb-1" style={{ color: "var(--text-secondary)" }}>{bal > 0 ? "Owes you" : bal < 0 ? "You owe" : "Settled"}</p>
+          <p className="font-display text-3xl font-bold" style={{ color: bal > 0 ? "var(--positive)" : bal < 0 ? "var(--negative)" : "var(--text-primary)" }}>{formatMoney(Math.abs(bal), symbol)}</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="text-center"><p className="text-xs" style={{ color: "var(--text-secondary)" }}>Total Credit</p><p className="text-sm font-semibold" style={{ color: "var(--positive)" }}>{formatMoney(totalCredit, symbol)}</p></div>
+          <div className="text-center"><p className="text-xs" style={{ color: "var(--text-secondary)" }}>Total Debit</p><p className="text-sm font-semibold" style={{ color: "var(--negative)" }}>{formatMoney(totalDebit, symbol)}</p></div>
+        </div>
+      </GlassCard>
+
+      <div className="grid grid-cols-3 gap-2.5">
+        <ActionChip icon="ArrowUpRight" label="Add Credit" onClick={() => onAddTxn(customer, "credit")} />
+        <ActionChip icon="ArrowDownRight" label="Receive Payment" onClick={() => onAddTxn(customer, "debit")} />
+        <ActionChip icon="Send" label="Send Payment" onClick={() => onAddTxn(customer, "credit", true)} />
+        <ActionChip icon="MessageCircle" label="WhatsApp" onClick={() => onSendWhatsApp(customer.phone, ledgerMessage())} />
+        <ActionChip icon="FileText" label="Receipt" onClick={() => rows[0] && onOpenReceipt(rows[0], customer)} />
+        <ActionChip icon="Edit3" label="Edit Info" onClick={() => onEdit(customer)} />
+      </div>
+
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="relative flex-1">
+            <IconR name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--text-secondary)" }} />
+            <TextInput placeholder="Search transactions" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9 text-xs py-2" />
+          </div>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-3 py-2 rounded-xl text-xs" style={inputStyle}>
+            <option value="all">All</option>
+            <option value="credit">Credit</option>
+            <option value="debit">Debit</option>
+          </select>
+        </div>
+        <h3 className="text-sm font-semibold mb-2" style={{ color: "var(--text-primary)" }}>Ledger</h3>
+        <GlassCard className="p-2">
+          <div className="flex justify-between px-2.5 py-2 text-[11px] font-medium" style={{ color: "var(--text-secondary)", borderBottom: "1px solid var(--glass-border)" }}>
+            <span>Opening Balance</span><span>{formatMoney(customer.openingBalance || 0, symbol)}</span>
+          </div>
+          {filteredRows.map((t, i) => (
+            <div key={t.id} className="flex items-center gap-3 p-2.5" style={{ borderBottom: i < filteredRows.length - 1 ? "1px solid var(--glass-border)" : "none" }}>
+              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: t.type === "credit" ? "rgba(52,211,153,0.15)" : "rgba(251,113,133,0.15)" }}>
+                {t.type === "credit" ? <IconR name="ArrowUpRight" size={16} style={{ color: "var(--positive)" }} /> : <IconR name="ArrowDownRight" size={16} style={{ color: "var(--negative)" }} />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{t.description}</p>
+                <p className="text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>{formatDateTime(t.date)} · {t.paymentMethod} · {t.receiptNumber}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-sm font-semibold" style={{ color: t.type === "credit" ? "var(--positive)" : "var(--negative)" }}>{t.type === "credit" ? "+" : "-"}{formatMoney(t.amount, symbol)}</p>
+                <p className="text-[10px]" style={{ color: "var(--text-secondary)" }}>Bal: {formatMoney(t.runningBalance, symbol)}</p>
+              </div>
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <button onClick={() => onOpenReceipt(t, customer)} title="Receipt"><IconR name="FileText" size={14} style={{ color: "var(--text-secondary)" }} /></button>
+                <button onClick={() => onEditTxn(t)} title="Edit"><IconR name="Edit3" size={14} style={{ color: "var(--text-secondary)" }} /></button>
+                <button onClick={() => onDeleteTxn(t)} title="Delete"><IconR name="Trash2" size={14} style={{ color: "var(--negative)" }} /></button>
+              </div>
+            </div>
+          ))}
+          {filteredRows.length === 0 && <p className="text-sm p-4 text-center" style={{ color: "var(--text-secondary)" }}>No transactions found.</p>}
+        </GlassCard>
+      </div>
+    </div>
+  );
+}
+
+function TransactionsScreen({ customers, transactions, settings, onOpenReceipt, onOpenCustomer }) {
+  const [q, setQ] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [range, setRange] = useState("all");
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+  const { from, to } = useMemo(() => getRangeDates(range), [range]);
+
+  let list = transactions.slice().sort((a, b) => new Date(b.date) - new Date(a.date) || b.createdAt - a.createdAt);
+  if (q.trim()) {
+    const ql = q.toLowerCase();
+    list = list.filter((t) => {
+      const cust = customers.find((c) => c.id === t.customerId);
+      return t.description.toLowerCase().includes(ql) || (t.receiptNumber || "").toLowerCase().includes(ql) || (cust?.name || "").toLowerCase().includes(ql) || String(t.amount).includes(q);
+    });
+  }
+  if (typeFilter !== "all") list = list.filter((t) => t.type === typeFilter);
+  if (range !== "all") list = list.filter((t) => inRange(t.date, from, to));
+
+  return (
+    <div className="space-y-4 pb-28 md:pb-8">
+      <h1 className="font-display text-2xl font-bold" style={{ color: "var(--text-primary)" }}>Ledger</h1>
+      <div className="relative">
+        <IconR name="Search" size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: "var(--text-secondary)" }} />
+        <TextInput placeholder="Search transactions, customer, amount..." value={q} onChange={(e) => setQ(e.target.value)} className="pl-10" />
+      </div>
+      <div className="flex gap-2 overflow-x-auto">
+        {[["all", "All"], ["credit", "Credit"], ["debit", "Debit"]].map(([k, l]) => (
+          <button key={k} onClick={() => setTypeFilter(k)} className="px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap" style={typeFilter === k ? { background: "var(--accent)", color: "#1A1204" } : { background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}>{l}</button>
+        ))}
+        <select value={range} onChange={(e) => setRange(e.target.value)} className="ml-auto px-3 py-1.5 rounded-full text-xs" style={{ background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}>
+          <option value="all">All time</option>
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="week">This week</option>
+          <option value="month">This month</option>
+        </select>
+      </div>
+      <GlassCard className="p-2">
+        {list.map((t, i) => {
+          const cust = customers.find((c) => c.id === t.customerId);
+          return (
+            <div key={t.id} className="flex items-center gap-3 p-2.5 cursor-pointer" style={{ borderBottom: i < list.length - 1 ? "1px solid var(--glass-border)" : "none" }} onClick={() => onOpenCustomer(t.customerId)}>
+              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: t.type === "credit" ? "rgba(52,211,153,0.15)" : "rgba(251,113,133,0.15)" }}>
+                {t.type === "credit" ? <IconR name="ArrowUpRight" size={16} style={{ color: "var(--positive)" }} /> : <IconR name="ArrowDownRight" size={16} style={{ color: "var(--negative)" }} />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate" style={{ color: "var(--text-primary)" }}>{cust?.name || "Unknown"} <span style={{ color: "var(--text-secondary)", fontWeight: 400 }}>· {t.description}</span></p>
+                <p className="text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>{formatDateTime(t.date)} · {t.receiptNumber}</p>
+              </div>
+              <p className="text-sm font-semibold shrink-0" style={{ color: t.type === "credit" ? "var(--positive)" : "var(--negative)" }}>{t.type === "credit" ? "+" : "-"}{formatMoney(t.amount, symbol)}</p>
+              <button onClick={(e) => { e.stopPropagation(); const rows = ledgerWithRunning(cust, transactions); const row = rows.find((r) => r.id === t.id); onOpenReceipt(row || t, cust); }}><IconR name="FileText" size={15} style={{ color: "var(--text-secondary)" }} /></button>
+            </div>
+          );
+        })}
+        {list.length === 0 && <EmptyState icon="Receipt" title="No transactions found" subtitle="Try adjusting filters." />}
+      </GlassCard>
+    </div>
+  );
+}
+
+function SplitBillScreen({ customers, settings, onConfirm }) {
+  const [amount, setAmount] = useState("");
+  const [desc, setDesc] = useState("");
+  const [selected, setSelected] = useState([]);
+  const [mode, setMode] = useState("equal");
+  const [customVals, setCustomVals] = useState({});
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+  const total = Number(amount) || 0;
+
+  const toggle = (id) => {
+    setSelected((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= 4) return prev;
+      return [...prev, id];
+    });
+  };
+
+  const shares = useMemo(() => {
+    if (selected.length === 0) return {};
+    if (mode === "equal") { const each = total / selected.length; const obj = {}; selected.forEach((id) => (obj[id] = each)); return obj; }
+    if (mode === "custom") { const obj = {}; selected.forEach((id) => (obj[id] = Number(customVals[id]) || 0)); return obj; }
+    if (mode === "percentage") { const obj = {}; selected.forEach((id) => (obj[id] = (total * (Number(customVals[id]) || 0)) / 100)); return obj; }
+    return {};
+  }, [selected, mode, customVals, total]);
+
+  const sum = Object.values(shares).reduce((a, b) => a + b, 0);
+  const diff = Math.round((total - sum) * 100) / 100;
+  const valid = selected.length > 0 && total > 0 && Math.abs(diff) < 0.5 && desc.trim();
+
+  return (
+    <div className="space-y-4 pb-28 md:pb-8">
+      <h1 className="font-display text-2xl font-bold" style={{ color: "var(--text-primary)" }}>Split Bill</h1>
+      <GlassCard className="p-4 space-y-3">
+        <Field label="Total bill amount"><TextInput type="number" placeholder="0" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+        <Field label="Bill description"><TextInput placeholder="e.g. Dinner order, Grocery bill" value={desc} onChange={(e) => setDesc(e.target.value)} /></Field>
+      </GlassCard>
+
+      <GlassCard className="p-4">
+        <h3 className="text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Select customers <span style={{ color: "var(--text-secondary)", fontWeight: 400 }}>({selected.length}/4)</span></h3>
+        <div className="grid grid-cols-2 gap-2.5 max-h-64 overflow-y-auto">
+          {customers.map((c) => {
+            const isSel = selected.includes(c.id);
+            return (
+              <button key={c.id} onClick={() => toggle(c.id)} disabled={!isSel && selected.length >= 4} className="flex items-center gap-2 p-2.5 rounded-xl transition disabled:opacity-30" style={{ background: isSel ? "rgba(245,165,36,0.15)" : "var(--glass-bg)", border: isSel ? "1px solid var(--accent)" : "1px solid var(--glass-border)" }}>
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold shrink-0" style={{ background: c.avatarColor + "33", color: c.avatarColor }}>{c.name.charAt(0)}</div>
+                <span className="text-xs font-medium truncate" style={{ color: "var(--text-primary)" }}>{c.name}</span>
+                {isSel && <IconR name="Check" size={14} className="ml-auto shrink-0" style={{ color: "var(--accent)" }} />}
+              </button>
+            );
+          })}
+        </div>
+      </GlassCard>
+
+      {selected.length > 0 && (
+        <GlassCard className="p-4 space-y-3">
+          <div className="flex gap-2">
+            {[["equal", "Equal"], ["custom", "Custom"], ["percentage", "Percentage"]].map(([k, l]) => (
+              <button key={k} onClick={() => setMode(k)} className="flex-1 py-2 rounded-xl text-xs font-medium" style={mode === k ? { background: "var(--accent)", color: "#1A1204" } : { background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}>{l}</button>
+            ))}
+          </div>
+          <div className="space-y-2">
+            {selected.map((id) => {
+              const c = customers.find((x) => x.id === id);
+              return (
+                <div key={id} className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold shrink-0" style={{ background: c.avatarColor + "33", color: c.avatarColor }}>{c.name.charAt(0)}</div>
+                  <span className="text-xs flex-1 truncate" style={{ color: "var(--text-primary)" }}>{c.name}</span>
+                  {mode === "equal" ? (
+                    <span className="text-sm font-semibold" style={{ color: "var(--positive)" }}>{formatMoney(shares[id] || 0, symbol)}</span>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <TextInput type="number" className="w-24 text-right py-1.5" value={customVals[id] || ""} onChange={(e) => setCustomVals((v) => ({ ...v, [id]: e.target.value }))} placeholder={mode === "percentage" ? "%" : symbol} />
+                      {mode === "percentage" && <IconR name="Percent" size={13} style={{ color: "var(--text-secondary)" }} />}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="pt-3 flex items-center justify-between" style={{ borderTop: "1px solid var(--glass-border)" }}>
+            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Split total</span>
+            <span className="text-sm font-semibold" style={{ color: Math.abs(diff) < 0.5 ? "var(--positive)" : "var(--negative)" }}>{formatMoney(sum, symbol)} / {formatMoney(total, symbol)}</span>
+          </div>
+          {Math.abs(diff) >= 0.5 && <p className="text-xs" style={{ color: "var(--negative)" }}>Split amounts must add up to the total bill (difference: {formatMoney(Math.abs(diff), symbol)}).</p>}
+        </GlassCard>
+      )}
+
+      <Btn className="w-full" disabled={!valid} onClick={() => onConfirm({ amount: total, description: desc, shares, customers: selected.map((id) => customers.find((c) => c.id === id)) })}>
+        <IconR name="SplitSquareHorizontal" size={16} /> Preview split
+      </Btn>
+    </div>
+  );
+}
+
+function ReportsScreen({ customers, transactions, settings }) {
+  const [range, setRange] = useState("month");
+  const [custom, setCustom] = useState({ from: "", to: "" });
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+  const { from, to } = range === "custom"
+    ? { from: custom.from ? startOfDay(new Date(custom.from)) : null, to: custom.to ? endOfDay(new Date(custom.to)) : null }
+    : getRangeDates(range);
+
+  const filtered = transactions.filter((t) => (range === "all" ? true : inRange(t.date, from, to)));
+  const creditTotal = filtered.filter((t) => t.type === "credit").reduce((s, t) => s + Number(t.amount), 0);
+  const debitTotal = filtered.filter((t) => t.type === "debit").reduce((s, t) => s + Number(t.amount), 0);
+  const balances = customers.map((c) => ({ c, bal: getBalance(c, transactions) }));
+  const totalReceivable = balances.filter((b) => b.bal > 0).reduce((s, b) => s + b.bal, 0);
+  const totalPayable = balances.filter((b) => b.bal < 0).reduce((s, b) => s + Math.abs(b.bal), 0);
+  const totalOutstanding = totalReceivable + totalPayable;
+
+  const exportCsv = () => {
+    let csv = "Date,Customer,Type,Amount,Description,Payment Method,Receipt Number\n";
+    filtered.forEach((t) => {
+      const cust = customers.find((c) => c.id === t.customerId);
+      csv += `${formatDate(t.date)},${cust?.name || ""},${t.type},${t.amount},"${t.description}",${t.paymentMethod},${t.receiptNumber}\n`;
+    });
+    downloadFile(`report-${Date.now()}.csv`, csv, "text/csv");
+  };
+
+  return (
+    <div className="space-y-4 pb-28 md:pb-8">
+      <div className="flex items-center justify-between">
+        <h1 className="font-display text-2xl font-bold" style={{ color: "var(--text-primary)" }}>Reports</h1>
+        <Btn variant="ghost" onClick={exportCsv}><IconR name="Download" size={15} /> Export</Btn>
+      </div>
+      <div className="flex gap-2 overflow-x-auto">
+        {[["today", "Today"], ["yesterday", "Yesterday"], ["week", "This week"], ["month", "This month"], ["all", "All time"], ["custom", "Custom"]].map(([k, l]) => (
+          <button key={k} onClick={() => setRange(k)} className="px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap" style={range === k ? { background: "var(--accent)", color: "#1A1204" } : { background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}>{l}</button>
+        ))}
+      </div>
+      {range === "custom" && (
+        <div className="flex gap-2">
+          <TextInput type="date" value={custom.from} onChange={(e) => setCustom((v) => ({ ...v, from: e.target.value }))} />
+          <TextInput type="date" value={custom.to} onChange={(e) => setCustom((v) => ({ ...v, to: e.target.value }))} />
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <GlassCard className="p-4"><p className="text-xs" style={{ color: "var(--text-secondary)" }}>Credit given</p><p className="font-display text-lg font-bold" style={{ color: "var(--positive)" }}>{formatMoney(creditTotal, symbol)}</p></GlassCard>
+        <GlassCard className="p-4"><p className="text-xs" style={{ color: "var(--text-secondary)" }}>Collected</p><p className="font-display text-lg font-bold" style={{ color: "var(--negative)" }}>{formatMoney(debitTotal, symbol)}</p></GlassCard>
+        <GlassCard className="p-4"><p className="text-xs" style={{ color: "var(--text-secondary)" }}>Total receivable</p><p className="font-display text-lg font-bold" style={{ color: "var(--positive)" }}>{formatMoney(totalReceivable, symbol)}</p></GlassCard>
+        <GlassCard className="p-4"><p className="text-xs" style={{ color: "var(--text-secondary)" }}>Total payable</p><p className="font-display text-lg font-bold" style={{ color: "var(--negative)" }}>{formatMoney(totalPayable, symbol)}</p></GlassCard>
+      </div>
+      <GlassCard className="p-4">
+        <p className="text-xs mb-1" style={{ color: "var(--text-secondary)" }}>Total outstanding</p>
+        <p className="font-display text-2xl font-bold" style={{ color: "var(--text-primary)" }}>{formatMoney(totalOutstanding, symbol)}</p>
+      </GlassCard>
+      <div>
+        <h3 className="text-sm font-semibold mb-2" style={{ color: "var(--text-primary)" }}>Customer-wise balances</h3>
+        <GlassCard className="p-2">
+          {balances.filter((b) => b.bal !== 0).sort((a, b) => Math.abs(b.bal) - Math.abs(a.bal)).map((b, i, arr) => (
+            <div key={b.c.id} className="flex items-center justify-between p-2.5" style={{ borderBottom: i < arr.length - 1 ? "1px solid var(--glass-border)" : "none" }}>
+              <span className="text-sm" style={{ color: "var(--text-primary)" }}>{b.c.name}</span>
+              <span className="text-sm font-semibold" style={{ color: b.bal > 0 ? "var(--positive)" : "var(--negative)" }}>{formatMoney(Math.abs(b.bal), symbol)}</span>
+            </div>
+          ))}
+          {balances.every((b) => b.bal === 0) && <p className="text-sm p-3" style={{ color: "var(--text-secondary)" }}>All accounts settled.</p>}
+        </GlassCard>
+      </div>
+    </div>
+  );
+}
+
+function SettingsScreen({ settings, onSave, onExport, onImport, onTogglePin, onChangePin }) {
+  const [form, setForm] = useState(settings);
+  useEffect(() => setForm(settings), [settings]);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const fileRef = useRef();
+
+  return (
+    <div className="space-y-4 pb-28 md:pb-8">
+      <h1 className="font-display text-2xl font-bold" style={{ color: "var(--text-primary)" }}>Settings</h1>
+
+      <GlassCard className="p-4 space-y-3">
+        <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Business profile</h3>
+        <Field label="Business name"><TextInput value={form.businessName} onChange={(e) => set("businessName", e.target.value)} /></Field>
+        <Field label="Owner name"><TextInput value={form.ownerName} onChange={(e) => set("ownerName", e.target.value)} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Phone"><TextInput value={form.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
+          <Field label="WhatsApp number"><TextInput value={form.whatsappNumber} onChange={(e) => set("whatsappNumber", e.target.value)} /></Field>
+        </div>
+        <Field label="Address"><TextInput value={form.address} onChange={(e) => set("address", e.target.value)} /></Field>
+        <Field label="Email"><TextInput value={form.email} onChange={(e) => set("email", e.target.value)} /></Field>
+      </GlassCard>
+
+      <GlassCard className="p-4 space-y-3">
+        <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Preferences</h3>
+        <Field label="Currency">
+          <Select value={form.currency} onChange={(e) => set("currency", e.target.value)} options={Object.keys(CURRENCIES).map((k) => ({ value: k, label: `${k} (${CURRENCIES[k].trim()})` }))} />
+        </Field>
+        <Field label="Receipt footer"><TextInput value={form.receiptFooter} onChange={(e) => set("receiptFooter", e.target.value)} /></Field>
+        <Field label="Default WhatsApp message"><TextArea rows={4} value={form.defaultWhatsAppMessage} onChange={(e) => set("defaultWhatsAppMessage", e.target.value)} /></Field>
+        <Field label="Theme">
+          <div className="flex gap-2">
+            <button onClick={() => set("theme", "dark")} className="flex-1 py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5" style={form.theme === "dark" ? { background: "var(--accent)", color: "#1A1204" } : { background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}><IconR name="Moon" size={13} /> Dark</button>
+            <button onClick={() => set("theme", "light")} className="flex-1 py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5" style={form.theme === "light" ? { background: "var(--accent)", color: "#1A1204" } : { background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}><IconR name="Sun" size={13} /> Light</button>
+          </div>
+        </Field>
+      </GlassCard>
+
+      <GlassCard className="p-4 space-y-3">
+        <h3 className="text-sm font-semibold flex items-center gap-2" style={{ color: "var(--text-primary)" }}><IconR name="ShieldCheck" size={16} /> Security</h3>
+        <div className="flex items-center justify-between">
+          <span className="text-sm" style={{ color: "var(--text-primary)" }}>PIN protection</span>
+          <button onClick={onTogglePin} className="w-11 h-6 rounded-full relative transition" style={{ background: settings.pinEnabled ? "var(--accent)" : "var(--glass-bg)", border: "1px solid var(--glass-border)" }}>
+            <span className="absolute top-0.5 w-5 h-5 rounded-full transition-all" style={{ left: settings.pinEnabled ? "22px" : "2px", background: "#fff" }} />
+          </button>
+        </div>
+        {settings.pinEnabled && <Btn variant="ghost" className="w-full" onClick={onChangePin}><IconR name="Lock" size={14} /> {settings.pin ? "Change PIN" : "Set PIN"}</Btn>}
+      </GlassCard>
+
+      <GlassCard className="p-4 space-y-3">
+        <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Data & backup</h3>
+        <Btn variant="ghost" className="w-full" onClick={onExport}><IconR name="Download" size={14} /> Export backup (JSON)</Btn>
+        <Btn variant="ghost" className="w-full" onClick={() => fileRef.current?.click()}><IconR name="Upload" size={14} /> Restore from backup</Btn>
+        <input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={(e) => { if (e.target.files[0]) onImport(e.target.files[0]); e.target.value = ""; }} />
+      </GlassCard>
+
+      <Btn className="w-full" onClick={() => onSave(form)}>Save changes</Btn>
+    </div>
+  );
+}
+
+function SearchOverlay({ open, onClose, customers, transactions, settings, onOpenCustomer }) {
+  const [q, setQ] = useState("");
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+  if (!open) return null;
+  const ql = q.toLowerCase();
+  const custResults = q ? customers.filter((c) => c.name.toLowerCase().includes(ql) || (c.phone || "").includes(q)) : [];
+  const txnResults = q ? transactions.filter((t) => t.description.toLowerCase().includes(ql) || (t.receiptNumber || "").toLowerCase().includes(ql) || String(t.amount).includes(q)).slice(0, 20) : [];
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "var(--bg-grad-1)" }}>
+      <div className="flex items-center gap-3 p-4" style={{ borderBottom: "1px solid var(--glass-border)" }}>
+        <IconR name="Search" size={18} style={{ color: "var(--text-secondary)" }} />
+        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search customers, transactions, receipts..." className="flex-1 bg-transparent outline-none text-sm" style={{ color: "var(--text-primary)" }} />
+        <IconBtn icon="X" onClick={onClose} />
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {custResults.length > 0 && (
+          <div>
+            <p className="text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>Customers</p>
+            <div className="space-y-2">
+              {custResults.map((c) => (
+                <GlassCard key={c.id} className="p-3 flex items-center gap-3 cursor-pointer" onClick={() => { onOpenCustomer(c.id); onClose(); }}>
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center font-semibold text-sm" style={{ background: c.avatarColor + "33", color: c.avatarColor }}>{c.name.charAt(0)}</div>
+                  <div><p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{c.name}</p><p className="text-xs" style={{ color: "var(--text-secondary)" }}>{c.phone}</p></div>
+                </GlassCard>
+              ))}
+            </div>
+          </div>
+        )}
+        {txnResults.length > 0 && (
+          <div>
+            <p className="text-xs font-medium mb-2" style={{ color: "var(--text-secondary)" }}>Transactions</p>
+            <div className="space-y-2">
+              {txnResults.map((t) => {
+                const cust = customers.find((c) => c.id === t.customerId);
+                return (
+                  <GlassCard key={t.id} className="p-3 flex items-center justify-between cursor-pointer" onClick={() => { onOpenCustomer(t.customerId); onClose(); }}>
+                    <div><p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{cust?.name}</p><p className="text-xs" style={{ color: "var(--text-secondary)" }}>{t.description} · {t.receiptNumber}</p></div>
+                    <span className="text-sm font-semibold" style={{ color: t.type === "credit" ? "var(--positive)" : "var(--negative)" }}>{formatMoney(t.amount, symbol)}</span>
+                  </GlassCard>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {q && custResults.length === 0 && txnResults.length === 0 && <EmptyState icon="Search" title="No results" subtitle="Try a different search term." />}
+      </div>
+    </div>
+  );
+}
+
+function LockScreen({ onUnlock, correctPin, businessName }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState(false);
+  const submit = (val) => {
+    if (val === correctPin) onUnlock();
+    else { setError(true); setTimeout(() => { setError(false); setPin(""); }, 450); }
+  };
+  const press = (d) => {
+    const np = (pin + d).slice(0, 4);
+    setPin(np);
+    if (np.length === 4) submit(np);
+  };
+  return (
+    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-8" style={{ background: "linear-gradient(180deg, var(--bg-grad-1), var(--bg-grad-2))" }}>
+      <div className="text-center">
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: "var(--glass-bg)", border: "1px solid var(--glass-border)" }}><IconR name="Lock" size={24} style={{ color: "var(--accent)" }} /></div>
+        <p className="font-display text-lg font-semibold" style={{ color: "var(--text-primary)" }}>{businessName || "Khata"}</p>
+        <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Enter your PIN to continue</p>
+      </div>
+      <div className={`flex gap-3 ${error ? "shake" : ""}`}>
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="w-3.5 h-3.5 rounded-full" style={{ background: i < pin.length ? (error ? "var(--negative)" : "var(--accent)") : "var(--glass-bg)", border: "1px solid var(--glass-border)" }} />
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"].map((d, i) => d === "" ? <div key={i} /> : (
+          <button key={i} onClick={() => (d === "del" ? setPin((p) => p.slice(0, -1)) : press(d))} className="w-16 h-16 rounded-full flex items-center justify-center text-lg font-medium transition active:scale-90" style={{ background: "var(--glass-bg)", border: "1px solid var(--glass-border)", color: "var(--text-primary)" }}>
+            {d === "del" ? "⌫" : d}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PinSetupModal({ open, onClose, onSave }) {
+  const [step, setStep] = useState(1);
+  const [pin1, setPin1] = useState("");
+  const [pin2, setPin2] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => { if (open) { setStep(1); setPin1(""); setPin2(""); setError(""); } }, [open]);
+
+  const handlePress = (d) => {
+    if (step === 1) {
+      if (d === "del") return setPin1((p) => p.slice(0, -1));
+      const np = (pin1 + d).slice(0, 4); setPin1(np);
+      if (np.length === 4) setStep(2);
+    } else {
+      if (d === "del") return setPin2((p) => p.slice(0, -1));
+      const np = (pin2 + d).slice(0, 4); setPin2(np);
+      if (np.length === 4) {
+        if (np === pin1) onSave(np);
+        else { setError("PINs don't match, try again."); setPin1(""); setPin2(""); setStep(1); }
+      }
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={step === 1 ? "Set new PIN" : "Confirm PIN"}>
+      <div className="flex flex-col items-center gap-6 py-4">
+        <div className="flex gap-3">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="w-3.5 h-3.5 rounded-full" style={{ background: i < (step === 1 ? pin1 : pin2).length ? "var(--accent)" : "var(--glass-bg)", border: "1px solid var(--glass-border)" }} />
+          ))}
+        </div>
+        {error && <p className="text-xs" style={{ color: "var(--negative)" }}>{error}</p>}
+        <div className="grid grid-cols-3 gap-3">
+          {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"].map((d, i) => d === "" ? <div key={i} /> : (
+            <button key={i} onClick={() => handlePress(d)} className="w-14 h-14 rounded-full flex items-center justify-center text-base font-medium" style={{ background: "var(--glass-bg)", border: "1px solid var(--glass-border)", color: "var(--text-primary)" }}>{d === "del" ? "⌫" : d}</button>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function CustomerFormModal({ open, onClose, onSave, initial }) {
+  const blank = { name: "", phone: "", address: "", notes: "", openingBalance: "0", type: "regular", avatarColor: "#F5A524" };
+  const [form, setForm] = useState(initial || blank);
+  useEffect(() => { setForm(initial ? { ...initial, openingBalance: String(initial.openingBalance) } : blank); }, [initial, open]);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const colors = ["#F5A524", "#34D399", "#60A5FA", "#FB7185", "#A78BFA", "#FBBF57"];
+  const canSave = form.name && form.name.trim().length > 0;
+  return (
+    <Modal open={open} onClose={onClose} title={initial ? "Edit customer" : "Add customer"}>
+      <div className="space-y-3">
+        <Field label="Full name *"><TextInput value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Customer name" /></Field>
+        <Field label="Phone number"><TextInput value={form.phone} onChange={(e) => set("phone", e.target.value)} placeholder="+92 300 1234567" /></Field>
+        <Field label="Address"><TextInput value={form.address} onChange={(e) => set("address", e.target.value)} /></Field>
+        <Field label="Notes"><TextArea rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Opening balance"><TextInput type="number" value={form.openingBalance} onChange={(e) => set("openingBalance", e.target.value)} /></Field>
+          <Field label="Customer type">
+            <Select value={form.type} onChange={(e) => set("type", e.target.value)} options={[{ value: "regular", label: "Regular" }, { value: "vip", label: "VIP" }, { value: "business", label: "Business" }]} />
+          </Field>
+        </div>
+        <Field label="Avatar color">
+          <div className="flex gap-2">
+            {colors.map((c) => (
+              <button key={c} onClick={() => set("avatarColor", c)} className="w-8 h-8 rounded-full transition" style={{ background: c, outline: form.avatarColor === c ? "2px solid #fff" : "none", outlineOffset: "2px" }} />
+            ))}
+          </div>
+        </Field>
+        <Btn className="w-full mt-2" disabled={!canSave} onClick={() => onSave({ ...form, openingBalance: Number(form.openingBalance) || 0 })}>{initial ? "Save changes" : "Add customer"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function TransactionFormModal({ open, onClose, onSave, customer, defaultType, defaultLabel, editData }) {
+  const buildDefault = () => (editData ? { ...editData, date: editData.date.slice(0, 16) } : { type: defaultType || "credit", amount: "", description: "", paymentMethod: "Cash", referenceNumber: "", notes: "", date: new Date().toISOString().slice(0, 16) });
+  const [form, setForm] = useState(buildDefault());
+  useEffect(() => { if (open) setForm(buildDefault()); }, [open, defaultType, editData]);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const canSave = Number(form.amount) > 0 && form.description && form.description.trim();
+  const title = defaultLabel || (editData ? "Edit transaction" : form.type === "credit" ? "Add credit" : "Add debit / payment");
+  return (
+    <Modal open={open} onClose={onClose} title={title}>
+      <div className="space-y-3">
+        <div className="flex gap-2">
+          <button onClick={() => set("type", "credit")} className="flex-1 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5" style={form.type === "credit" ? { background: "rgba(52,211,153,0.2)", color: "var(--positive)", border: "1px solid var(--positive)" } : { background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}><IconR name="ArrowUpRight" size={14} /> Credit</button>
+          <button onClick={() => set("type", "debit")} className="flex-1 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5" style={form.type === "debit" ? { background: "rgba(251,113,133,0.2)", color: "var(--negative)", border: "1px solid var(--negative)" } : { background: "var(--glass-bg)", color: "var(--text-secondary)", border: "1px solid var(--glass-border)" }}><IconR name="ArrowDownRight" size={14} /> Debit</button>
+        </div>
+        <Field label="Amount *"><TextInput type="number" value={form.amount} onChange={(e) => set("amount", e.target.value)} placeholder="0" /></Field>
+        <Field label="Description *"><TextInput value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="e.g. Grocery items" /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Payment method">
+            <Select value={form.paymentMethod} onChange={(e) => set("paymentMethod", e.target.value)} options={[{ value: "Cash", label: "Cash" }, { value: "Bank Transfer", label: "Bank Transfer" }, { value: "JazzCash", label: "JazzCash" }, { value: "EasyPaisa", label: "EasyPaisa" }, { value: "Card", label: "Card" }, { value: "Other", label: "Other" }]} />
+          </Field>
+          <Field label="Reference number"><TextInput value={form.referenceNumber} onChange={(e) => set("referenceNumber", e.target.value)} /></Field>
+        </div>
+        <Field label="Date & time"><TextInput type="datetime-local" value={form.date} onChange={(e) => set("date", e.target.value)} /></Field>
+        <Field label="Notes"><TextArea rows={2} value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
+        <Btn className="w-full mt-2" disabled={!canSave} onClick={() => onSave({ ...form, amount: Number(form.amount) })}>Save transaction</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function ReceiptModal({ open, onClose, txn, customer, settings, onSendWhatsApp }) {
+  if (!open || !txn) return null;
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+  const prevBalance = (txn.runningBalance ?? 0) - (txn.type === "credit" ? txn.amount : -txn.amount);
+  const msg = (settings.defaultWhatsAppMessage || "")
+    .replace("{name}", customer?.name || "")
+    .replace("{description}", txn.description)
+    .replace("{amount}", formatMoney(txn.amount, symbol))
+    .replace("{previousBalance}", formatMoney(prevBalance, symbol))
+    .replace("{newBalance}", formatMoney(txn.runningBalance ?? 0, symbol))
+    .replace("{date}", formatDate(txn.date));
+
+  return (
+    <Modal open={open} onClose={onClose} title="Receipt">
+      <div id="receipt-print" className="rounded-2xl p-5 space-y-4" style={{ background: "#fff", color: "#111" }}>
+        <div className="text-center space-y-1">
+          <h2 className="font-bold text-lg">{settings.businessName}</h2>
+          <p className="text-xs text-gray-500">{settings.address}</p>
+          <p className="text-xs text-gray-500">{settings.phone}</p>
+        </div>
+        <div className="flex justify-between text-xs text-gray-500 border-t border-b border-gray-200 py-2">
+          <span>{txn.receiptNumber}</span>
+          <span>{formatDateTime(txn.date)}</span>
+        </div>
+        <div className="text-sm space-y-1">
+          <div className="flex justify-between"><span className="text-gray-500">Customer</span><span className="font-medium">{customer?.name}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Phone</span><span>{customer?.phone}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Description</span><span>{txn.description}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Payment method</span><span>{txn.paymentMethod}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Status</span><span className="capitalize">{txn.type === "credit" ? "Credit given" : "Payment received"}</span></div>
+        </div>
+        <div className="border-t border-gray-200 pt-2 text-sm space-y-1">
+          <div className="flex justify-between"><span className="text-gray-500">Previous balance</span><span>{formatMoney(prevBalance, symbol)}</span></div>
+          <div className="flex justify-between font-semibold"><span>{txn.type === "credit" ? "Amount added" : "Amount paid"}</span><span>{formatMoney(txn.amount, symbol)}</span></div>
+          <div className="flex justify-between font-bold text-base border-t border-gray-200 pt-1"><span>New balance</span><span>{formatMoney(txn.runningBalance ?? 0, symbol)}</span></div>
+        </div>
+        <p className="text-center text-xs text-gray-500 pt-2">{settings.receiptFooter}</p>
+      </div>
+      <div className="grid grid-cols-2 gap-3 mt-4">
+        <Btn variant="ghost" onClick={() => window.print()}><IconR name="Printer" size={14} /> Print</Btn>
+        <Btn onClick={() => onSendWhatsApp(customer?.phone, msg)}><IconR name="MessageCircle" size={14} /> WhatsApp</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function SplitPreviewModal({ open, onClose, data, settings, onConfirm }) {
+  if (!open || !data) return null;
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+  return (
+    <Modal open={open} onClose={onClose} title="Split bill preview">
+      <div className="space-y-3">
+        <GlassCard className="p-3"><p className="text-xs" style={{ color: "var(--text-secondary)" }}>{data.description}</p><p className="font-display text-xl font-bold" style={{ color: "var(--text-primary)" }}>{formatMoney(data.amount, symbol)}</p></GlassCard>
+        <div className="space-y-2">
+          {data.customers.map((c) => (
+            <div key={c.id} className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold" style={{ background: c.avatarColor + "33", color: c.avatarColor }}>{c.name.charAt(0)}</div>
+              <span className="text-sm flex-1" style={{ color: "var(--text-primary)" }}>{c.name}</span>
+              <span className="text-sm font-semibold" style={{ color: "var(--positive)" }}>{formatMoney(data.shares[c.id] || 0, symbol)}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs" style={{ color: "var(--text-secondary)" }}>Each customer's Khata will be updated and a receipt generated automatically.</p>
+        <Btn className="w-full" onClick={onConfirm}><IconR name="Check" size={15} /> Confirm & save</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function SplitSuccessModal({ open, onClose, results, settings, onSendWhatsApp, onOpenReceipt }) {
+  if (!open) return null;
+  const symbol = CURRENCIES[settings.currency] || settings.currency;
+  return (
+    <Modal open={open} onClose={onClose} title="Split bill saved">
+      <div className="space-y-3">
+        <div className="text-center py-2"><IconR name="Check" size={32} style={{ color: "var(--positive)" }} className="mx-auto mb-2" /><p className="text-sm" style={{ color: "var(--text-secondary)" }}>Transactions added to each customer's ledger.</p></div>
+        {results.map((r) => (
+          <GlassCard key={r.txn.id} className="p-3 flex items-center gap-3">
+            <div className="flex-1"><p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{r.customer.name}</p><p className="text-xs" style={{ color: "var(--text-secondary)" }}>{formatMoney(r.txn.amount, symbol)} · {r.txn.receiptNumber}</p></div>
+            <button onClick={() => onOpenReceipt(r.txn, r.customer)}><IconR name="FileText" size={16} style={{ color: "var(--text-secondary)" }} /></button>
+            <button onClick={() => onSendWhatsApp(r.customer.phone, `Assalam-o-Alaikum,\n\nYour share of the split bill:\nAmount: ${formatMoney(r.txn.amount, symbol)}\nDescription: ${r.txn.description}\nNew Balance: ${formatMoney(r.txn.runningBalance, symbol)}\n\nThank you.`)}><IconR name="MessageCircle" size={16} style={{ color: "var(--positive)" }} /></button>
+          </GlassCard>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------- Root App --------------------------------------
+function App() {
+  const [loading, setLoading] = useState(true);
+  const [customers, setCustomers] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [settings, setSettings] = useState(null);
+  const [screen, setScreen] = useState("dashboard");
+  const [selectedCustomerId, setSelectedCustomerId] = useState(null);
+  const [locked, setLocked] = useState(false);
+  const [toast, setToast] = useState(null);
+  const loadedRef = useRef(false);
+
+  const [customerModal, setCustomerModal] = useState({ open: false, initial: null });
+  const [txnModal, setTxnModal] = useState({ open: false, customer: null, type: "credit" });
+  const [receiptModal, setReceiptModal] = useState({ open: false, txn: null, customer: null });
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, title: "", message: "", onConfirm: null });
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [pinSetupOpen, setPinSetupOpen] = useState(false);
+  const [splitPreview, setSplitPreview] = useState({ open: false, data: null });
+  const [splitSuccess, setSplitSuccess] = useState({ open: false, results: [] });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let data = null;
+      try {
+        const res = await window.storage.get("khata-store");
+        if (res && res.value) data = JSON.parse(res.value);
+      } catch (e) { /* fall through to seed */ }
+      if (!data) data = seedDemoData();
+      if (cancelled) return;
+      setCustomers(data.customers || []);
+      setTransactions(data.transactions || []);
+      setSettings(data.settings || seedDemoData().settings);
+      setLocked(!!(data.settings && data.settings.pinEnabled));
+      setLoading(false);
+      loadedRef.current = true;
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!loadedRef.current || loading || !settings) return;
+    (async () => {
+      try { await window.storage.set("khata-store", JSON.stringify({ customers, transactions, settings })); }
+      catch (e) { /* best effort persistence */ }
+    })();
+  }, [customers, transactions, settings, loading]);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2200); };
+
+  if (loading || !settings) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: "#0B1120" }}>
+        <div className="w-8 h-8 rounded-full border-2 animate-spin" style={{ borderColor: "rgba(245,165,36,0.25)", borderTopColor: "#F5A524" }} />
+      </div>
+    );
+  }
+
+  if (locked) {
+    return (
+      <div className={`theme-${settings.theme}`}>
+        <style>{GLOBAL_CSS}</style>
+        <LockScreen correctPin={settings.pin} businessName={settings.businessName} onUnlock={() => setLocked(false)} />
+      </div>
+    );
+  }
+
+  const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
+
+  const openCustomer = (id) => { setSelectedCustomerId(id); setScreen("customerDetail"); };
+
+  const saveCustomer = (data) => {
+    if (data.id) {
+      setCustomers((cs) => cs.map((c) => (c.id === data.id ? { ...c, ...data } : c)));
+      showToast("Customer updated");
+    } else {
+      const newCust = { ...data, id: uid("c"), createdAt: new Date().toISOString(), status: "active" };
+      setCustomers((cs) => [...cs, newCust]);
+      showToast("Customer added");
+    }
+    setCustomerModal({ open: false, initial: null });
+  };
+
+  const deleteCustomer = (customer) => {
+    setConfirmDialog({
+      open: true,
+      title: "Delete customer?",
+      message: `This will permanently delete ${customer.name} and all their transaction history. This cannot be undone.`,
+      onConfirm: () => {
+        setCustomers((cs) => cs.filter((c) => c.id !== customer.id));
+        setTransactions((ts) => ts.filter((t) => t.customerId !== customer.id));
+        setConfirmDialog({ open: false });
+        setScreen("customers");
+        showToast("Customer deleted");
+      },
+    });
+  };
+
+  const saveTransaction = (data) => {
+    const customer = txnModal.customer;
+    if (data.id) {
+      setTransactions((ts) => ts.map((t) => (t.id === data.id ? { ...t, ...data, date: new Date(data.date).toISOString() } : t)));
+      showToast("Transaction updated");
+    } else {
+      const receiptNumber = nextReceiptNumber(settings.receiptCounter);
+      const newTxn = { ...data, id: uid("t"), customerId: customer.id, receiptNumber, createdAt: Date.now(), date: new Date(data.date).toISOString() };
+      setTransactions((ts) => [...ts, newTxn]);
+      setSettings((s) => ({ ...s, receiptCounter: s.receiptCounter + 1 }));
+      showToast("Transaction saved");
+    }
+    setTxnModal({ open: false, customer: null, type: "credit" });
+  };
+
+  const deleteTransaction = (txn) => {
+    setConfirmDialog({
+      open: true,
+      title: "Delete transaction?",
+      message: "This will remove the transaction and recalculate the ledger balance. This cannot be undone.",
+      onConfirm: () => {
+        setTransactions((ts) => ts.filter((t) => t.id !== txn.id));
+        setConfirmDialog({ open: false });
+        showToast("Transaction deleted");
+      },
+    });
+  };
+
+  const openReceipt = (txn, customer) => setReceiptModal({ open: true, txn, customer });
+
+  const sendWhatsApp = (phone, message) => {
+    if (!phone) { showToast("No phone number on file"); return; }
+    window.open(buildWhatsAppLink(phone, message), "_blank");
+  };
+
+  const handleQuickAction = (id) => {
+    if (id === "addCustomer") setCustomerModal({ open: true, initial: null });
+    else if (id === "addTransaction") { if (!customers.length) return showToast("Add a customer first"); setTxnModal({ open: true, customer: customers[0], type: "credit" }); }
+    else if (id === "receivePayment") { if (!customers.length) return showToast("Add a customer first"); setTxnModal({ open: true, customer: customers[0], type: "debit", label: "Receive payment" }); }
+    else if (id === "sendPayment") { if (!customers.length) return showToast("Add a customer first"); setTxnModal({ open: true, customer: customers[0], type: "credit", label: "Send payment" }); }
+    else if (id === "splitBill") setScreen("split");
+    else if (id === "sendReceipt") {
+      if (!transactions.length) return showToast("No transactions yet");
+      const last = transactions.slice().sort((a, b) => b.createdAt - a.createdAt)[0];
+      const cust = customers.find((c) => c.id === last.customerId);
+      const rows = ledgerWithRunning(cust, transactions);
+      const row = rows.find((r) => r.id === last.id);
+      openReceipt(row || last, cust);
+    }
+  };
+
+  const confirmSplit = (data) => setSplitPreview({ open: true, data });
+
+  const finalizeSplit = () => {
+    const data = splitPreview.data;
+    let counter = settings.receiptCounter;
+    const newTxns = [];
+    data.customers.forEach((c) => {
+      const receiptNumber = nextReceiptNumber(counter); counter++;
+      newTxns.push({ id: uid("t"), customerId: c.id, date: new Date().toISOString(), type: "credit", amount: Math.round((data.shares[c.id] || 0) * 100) / 100, description: `Split bill: ${data.description}`, paymentMethod: "Split Bill", referenceNumber: "", notes: "", receiptNumber, createdAt: Date.now(), splitBillId: uid("split") });
+    });
+    const mergedTxns = [...transactions, ...newTxns];
+    setTransactions(mergedTxns);
+    setSettings((s) => ({ ...s, receiptCounter: counter }));
+    const results = newTxns.map((t) => {
+      const cust = customers.find((c) => c.id === t.customerId);
+      const rows = ledgerWithRunning(cust, mergedTxns);
+      const row = rows.find((r) => r.id === t.id) || t;
+      return { txn: row, customer: cust };
+    });
+    setSplitPreview({ open: false, data: null });
+    setSplitSuccess({ open: true, results });
+    setScreen("dashboard");
+  };
+
+  const exportBackup = () => downloadFile(`khata-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({ customers, transactions, settings }, null, 2));
+
+  const importBackup = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target.result);
+        if (parsed.customers && parsed.transactions && parsed.settings) {
+          setCustomers(parsed.customers); setTransactions(parsed.transactions); setSettings(parsed.settings);
+          showToast("Backup restored");
+        } else showToast("Invalid backup file");
+      } catch (err) { showToast("Could not read backup file"); }
+    };
+    reader.readAsText(file);
+  };
+
+  const screens = {
+    dashboard: <Dashboard customers={customers} transactions={transactions} settings={settings} onNav={setScreen} onQuickAction={handleQuickAction} onOpenCustomer={openCustomer} />,
+    customers: <CustomersScreen customers={customers} transactions={transactions} settings={settings} onOpen={openCustomer} onAdd={() => setCustomerModal({ open: true, initial: null })} />,
+    customerDetail: selectedCustomer ? (
+      <CustomerDetail
+        customer={selectedCustomer}
+        transactions={transactions}
+        settings={settings}
+        onBack={() => setScreen("customers")}
+        onEdit={(c) => setCustomerModal({ open: true, initial: c })}
+        onDelete={deleteCustomer}
+        onAddTxn={(c, type, isSend) => setTxnModal({ open: true, customer: c, type, label: isSend ? "Send payment" : undefined })}
+        onOpenReceipt={openReceipt}
+        onSendWhatsApp={sendWhatsApp}
+        onEditTxn={(t) => setTxnModal({ open: true, customer: selectedCustomer, type: t.type, editData: t })}
+        onDeleteTxn={deleteTransaction}
+      />
+    ) : <EmptyState icon="Users" title="No customer selected" />,
+    transactions: <TransactionsScreen customers={customers} transactions={transactions} settings={settings} onOpenReceipt={openReceipt} onOpenCustomer={openCustomer} />,
+    split: <SplitBillScreen customers={customers} settings={settings} onConfirm={confirmSplit} />,
+    reports: <ReportsScreen customers={customers} transactions={transactions} settings={settings} />,
+    settings: (
+      <SettingsScreen
+        settings={settings}
+        onSave={(f) => { setSettings((s) => ({ ...s, ...f })); showToast("Settings saved"); }}
+        onExport={exportBackup}
+        onImport={importBackup}
+        onTogglePin={() => {
+          if (!settings.pinEnabled && !settings.pin) setPinSetupOpen(true);
+          else setSettings((s) => ({ ...s, pinEnabled: !s.pinEnabled }));
+        }}
+        onChangePin={() => setPinSetupOpen(true)}
+      />
+    ),
+  };
+
+  return (
+    <div className={`theme-${settings.theme} min-h-screen relative`} style={{ background: "linear-gradient(180deg, var(--bg-grad-1), var(--bg-grad-2))" }}>
+      <style>{GLOBAL_CSS}</style>
+
+      <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+        <div className="absolute -top-24 -left-24 w-72 h-72 rounded-full" style={{ background: "var(--accent)", opacity: 0.15, filter: "blur(90px)" }} />
+        <div className="absolute top-1/3 -right-24 w-80 h-80 rounded-full" style={{ background: "var(--positive)", opacity: 0.12, filter: "blur(100px)" }} />
+      </div>
+
+      <ToastView toast={toast} />
+
+      <div className="hidden md:flex fixed left-0 top-0 bottom-0 w-60 flex-col p-5 gap-1 z-30" style={{ borderRight: "1px solid var(--glass-border)" }}>
+        <div className="flex items-center gap-2.5 mb-8 px-2">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold shrink-0" style={{ background: "var(--accent)", color: "#1A1204" }}>{(settings.businessName || "K").charAt(0)}</div>
+          <span className="font-display font-semibold text-sm truncate" style={{ color: "var(--text-primary)" }}>{settings.businessName}</span>
+        </div>
+        {NAV_ITEMS.map((n) => (
+          <button key={n.id} onClick={() => { setScreen(n.id); if (n.id !== "customerDetail") setSelectedCustomerId(null); }} className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition" style={(screen === n.id || (n.id === "customers" && screen === "customerDetail")) ? { background: "var(--glass-bg)", color: "var(--accent)" } : { color: "var(--text-secondary)" }}>
+            <IconR name={n.icon} size={18} /> {n.label}
+          </button>
+        ))}
+        <button onClick={() => setSearchOpen(true)} className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium mt-2" style={{ color: "var(--text-secondary)" }}><IconR name="Search" size={18} /> Search</button>
+      </div>
+
+      <div className="md:ml-60 max-w-3xl mx-auto px-4 pt-6 md:px-8">
+        {screens[screen]}
+      </div>
+
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 px-3 pb-3">
+        <div className="glass rounded-3xl flex items-center justify-around py-2" style={{ background: "var(--glass-bg-strong)" }}>
+          {NAV_ITEMS.map((n) => {
+            const active = screen === n.id || (n.id === "customers" && screen === "customerDetail");
+            return (
+              <button key={n.id} onClick={() => { setScreen(n.id); if (n.id !== "customerDetail") setSelectedCustomerId(null); }} className="flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-xl transition">
+                <IconR name={n.icon} size={19} style={{ color: active ? "var(--accent)" : "var(--text-secondary)" }} />
+                <span className="text-[9.5px] font-medium" style={{ color: active ? "var(--accent)" : "var(--text-secondary)" }}>{n.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <button onClick={() => setSearchOpen(true)} className="md:hidden fixed top-5 right-4 z-30 w-10 h-10 rounded-full flex items-center justify-center glass" style={{ background: "var(--glass-bg-strong)" }}>
+        <IconR name="Search" size={17} style={{ color: "var(--text-primary)" }} />
+      </button>
+
+      <CustomerFormModal open={customerModal.open} initial={customerModal.initial} onClose={() => setCustomerModal({ open: false, initial: null })} onSave={saveCustomer} />
+      <TransactionFormModal open={txnModal.open} customer={txnModal.customer} defaultType={txnModal.type} defaultLabel={txnModal.label} editData={txnModal.editData} onClose={() => setTxnModal({ open: false, customer: null, type: "credit" })} onSave={saveTransaction} />
+      <ReceiptModal open={receiptModal.open} txn={receiptModal.txn} customer={receiptModal.customer} settings={settings} onClose={() => setReceiptModal({ open: false, txn: null, customer: null })} onSendWhatsApp={sendWhatsApp} />
+      <ConfirmDialog open={confirmDialog.open} title={confirmDialog.title} message={confirmDialog.message} onClose={() => setConfirmDialog({ open: false })} onConfirm={confirmDialog.onConfirm} />
+      <SearchOverlay open={searchOpen} onClose={() => setSearchOpen(false)} customers={customers} transactions={transactions} settings={settings} onOpenCustomer={openCustomer} />
+      <PinSetupModal open={pinSetupOpen} onClose={() => setPinSetupOpen(false)} onSave={(pin) => { setSettings((s) => ({ ...s, pin, pinEnabled: true })); setPinSetupOpen(false); showToast("PIN set"); }} />
+      <SplitPreviewModal open={splitPreview.open} data={splitPreview.data} settings={settings} onClose={() => setSplitPreview({ open: false, data: null })} onConfirm={finalizeSplit} />
+      <SplitSuccessModal open={splitSuccess.open} results={splitSuccess.results} settings={settings} onClose={() => setSplitSuccess({ open: false, results: [] })} onSendWhatsApp={sendWhatsApp} onOpenReceipt={openReceipt} />
+    </div>
+  );
+}
+
+
+const rootEl = document.getElementById("root");
+const root = ReactDOM.createRoot(rootEl);
+root.render(React.createElement(App));
+
+</script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
